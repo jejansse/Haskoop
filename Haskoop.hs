@@ -1,10 +1,11 @@
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE TypeSynonymInstances #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# OverloadedStrings #-}
 module Haskoop where
-import qualified Data.List as L
-import qualified Data.Set as S
 import Control.Arrow
+import Control.Monad
+import qualified Data.List as L
 
 type Mapper k1 v1 k2 v2 = k1 -> v1 -> [(k2,v2)]
 
@@ -20,65 +21,84 @@ newtype Job k1 v1 k2 v2 = Job { runJob :: Configuration -> IO ()}
 data JobType = Plain | Hadoop
 
 data Configuration = Configuration {
-	input :: [String],
-	output :: String,
-	mappers :: Int,
-	reducers :: Int,
-	jobType :: JobType,
-	number :: Int
+	input :: Maybe [String],
+	output :: Maybe String,
+	mappers :: Maybe Int,
+	reducers :: Maybe Int,
+	jobType :: Maybe JobType,
+	number :: Maybe Int
 }
 
 defaultConfiguration :: Configuration
 defaultConfiguration = Configuration {
-	input = undefined,
-	output = undefined,
-	mappers = 1,
-	reducers = 1,
-	jobType = Plain,
-	number = 0
+	input = Nothing,
+	output = Nothing,
+	mappers = Just 1,
+	reducers = Just 1,
+	jobType = Just Plain,
+	number = Just 0
 }
 
 class Parsable a where
 	parse :: String -> a
 
 instance Parsable Int where
-	parse = read
+	parse = read -- FIXME: can we avoid the unpack and read??
 
 instance Parsable String where
 	parse s = s
 
-runPlainIteration :: (Parsable k1, Parsable v1, Show k3, Show v3) => Configuration -> Iteration k1 v1 k3 v3 -> IO ()
--- FIXME: we should just read a tab-separate file for key value pairs!
--- FIXME: add the appropriate type constraints
--- Make a temporary file, use that as output and read the other file in line per line
--- and process it using the mapper with the line number as key
-runPlainIteration conf (Iteration mapper reducer) = do
-	contents <- readFile (head $ input conf)
-	let mapOutput = concatMap (uncurry mapper) $ map ((parse *** parse) . break (== '\t')) (lines contents)
-	let	keys = S.fromList $ map fst mapOutput
-	let getValues k = map snd $ filter ((==k) . fst) mapOutput
-	let	reduceInput = [(k, getValues k) | k <- S.elems keys]
-	let	reduceOutput = concatMap (uncurry reducer) reduceInput
-	mapM_ (putStrLn . (\(k,v) -> show k ++ "\t" ++ show v)) reduceOutput
 
-runHadoopIteration :: Configuration -> Iteration k1 v1 k2 v2 -> IO ()
-runHadoopIteration conf it = undefined
+--runPlainIteration :: (Parsable k1, Parsable v1, Show k3, Ord k3, Show v3) => Configuration -> Iteration k1 v1 k3 v3 -> IO ()
+--runPlainIteration conf (Iteration mapper reducer) = do
+--	contents <- getContents
+--	mapM_ putStrLn $ concatMap (showKeyValue . uncurry reducer) $ groupMapOutput $ L.sort $ concatMap (uncurry mapper . parseKeyValue) $ lines contents
 
-runIteration :: (Parsable k1, Parsable v1, Show k3, Show v3) => Configuration -> Iteration k1 v1 k3 v3 -> IO ()
-runIteration conf@(Configuration { jobType = Plain }) it = runPlainIteration conf it
-runIteration conf@(Configuration { jobType = Hadoop}) it = runHadoopIteration conf it 
 
-job :: (Parsable k1, Parsable v1, Show k3, Show v3) => Iteration k1 v1 k3 v3 -> Job k1 v1 k3 v3
-job it = Job $ \conf -> runIteration conf it
+parseKeyValue :: (Parsable k, Parsable v) => String -> (k,v)
+parseKeyValue = (parse *** parse) . split (== '\t')
 
-concatJob :: Job k1 v1 k2 v2 -> Job k2 v2 k3 v3 -> Job k1 v1 k3 v3
-concatJob j1 j2 = Job $ \conf -> do
-	runJob j1 (conf { output = intermediateFile conf, number = number conf })
-	runJob j2 (conf { input = [intermediateFile conf], number = number conf + 1 })
-  where
-  	intermediateFile conf = output conf ++ makeIntermediateSuffix (output conf) (number conf)
-  	makeIntermediateSuffix file jobNumber = if hasIntermediateSuffix file then "" else "_pre" ++ show jobNumber
+split p xs = let (group, rest) = break p xs
+			 in (group, tail rest)
+
+
+showKeyValue :: (Show k, Show v) => (k,v) -> String
+showKeyValue (k,v) = show k ++ "\t" ++ show v
+
+
+--runHadoopIteration :: Configuration -> Iteration k1 v1 k2 v2 -> IO ()
+--runHadoopIteration conf (Iteration mapper reducer) = undefined
+
+
+-- Groups the streaming reduce output per key. This is guaranteed to be sorted by key.
+-- FIXME: use something more efficient than list concatenation.
+-- FIXME: use Data.Vector and use span and break!!!
+groupMapOutput :: (Eq k, Eq v) => [(k,v)] -> [(k,[v])]
+groupMapOutput kvs = groupMapOutput' kvs []
+
+groupMapOutput' kvs gs
+	| kvs == [] = gs
+	| otherwise = groupMapOutput' rest (gs ++ [(k, map snd group)])
+		where 
+			k = fst (head kvs)
+			(group, rest) = span ((== k) . fst) kvs
+
+
+--runIteration :: (Parsable k1, Parsable v1, Show k3, Ord k3, Show v3) => Configuration -> Iteration k1 v1 k3 v3 -> IO ()
+--runIteration conf@(Configuration { jobType = Just Plain }) it = runPlainIteration conf it
+--runIteration conf@(Configuration { jobType = Just Hadoop}) it = runHadoopIteration conf it 
+
+--job :: (Parsable k1, Parsable v1, Show k3, Show v3) => Iteration k1 v1 k3 v3 -> Job k1 v1 k3 v3
+--job it = Job $ \conf -> runIteration conf it
+
+--concatJob :: Job k1 v1 k2 v2 -> Job k2 v2 k3 v3 -> Job k1 v1 k3 v3
+--concatJob j1 j2 = Job $ \conf -> do
+--	runJob j1 (conf { output = intermediateFile conf, number = number conf })
+--	runJob j2 (conf { input = [intermediateFile conf], number = number conf + 1 })
+--  where
+--  	intermediateFile conf = output conf ++ makeIntermediateSuffix (output conf) (number conf)
+--  	makeIntermediateSuffix file jobNumber = if hasIntermediateSuffix file then "" else "_pre" ++ show jobNumber
 
 -- Checks for "_pre1" etc. at the end of the intermediate file
-hasIntermediateSuffix :: String -> Bool
-hasIntermediateSuffix s = tail (reverse "_pre") `L.isPrefixOf` reverse s
+--hasIntermediateSuffix :: String -> Bool
+--hasIntermediateSuffix s = tail (reverse "_pre") `isPrefixOf` reverse s
