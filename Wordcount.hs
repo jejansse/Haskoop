@@ -5,15 +5,16 @@ import Haskoop
 
 configuration :: Configuration
 configuration = defaultConfiguration {
-	input = ["access.log"],
-	output = "ipcounts"
+	input = Just ["access.log"],
+	output = Just "ipcounts"
 }
 
-mapper1 :: Int -> String -> [(String, Int)]
-mapper1 _ value = [(w,1) | w <- words value]
+mapper1 :: Int -> String -> IO [(String, Int)]
+mapper1 _ value = return [(w,1) | w <- words value]
 
-reducer1 :: String -> [Int] -> [(String, Int)]
-reducer1 key values = [(key, sum values)]
+reducer1 :: String -> [Int] -> IO [(String, Int)]
+reducer1 key values = return [(key, sum values)]
 
 main :: IO ()
-main = runIteration configuration $ Iteration mapper1 reducer1
+main = runMapper mapper1
+--main = runReducer reducer1
