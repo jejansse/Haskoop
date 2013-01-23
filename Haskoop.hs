@@ -3,19 +3,64 @@
 {-# LANGUAGE FlexibleInstances #-}
 module Haskoop where
 import Control.Arrow
+import System.Environment
+
 
 type Mapper k1 v1 k2 v2 = k1 -> v1 -> IO [(k2,v2)]
 
 type Reducer k1 v1 k2 v2 = k1 -> [v1] -> IO [(k2,v2)]
 
-data Iteration k1 v1 k3 v3 = forall k2 v2 . (Showable k2, Ord k2, Showable v2, Ord v2) => Iteration {
-	mapper :: Mapper k1 v1 k2 v2,
-	reducer :: Reducer k2 v2 k3 v3
-}
+data Iteration k1 v1 k3 v3 = forall k2 v2 . (Eq k2, Eq v2, Parsable k2, Parsable v2, Showable k2, Showable v2) => Iteration (Mapper k1 v1 k2 v2) (Reducer k2 v2 k3 v3)
 
-type IterationNumber  = Int
+data Job k1 v1 k3 v3 = EmptyJob | forall k2 v2 . (Eq k2, Eq v2, Parsable k2, Parsable v2, Showable k2, Showable v2) => ConsJob (Iteration k1 v1 k2 v2) (Job k2 v2 k3 v3)
 
-data JobType = Plain | Hadoop
+
+-- FIXME: can we get rid of this monstrous type constraint?
+job :: (Parsable k1, Parsable v1, Parsable k2, Parsable v2, Eq k2, Eq v2, Parsable k3, Parsable v3, Showable k1,
+ Showable v1, Showable k2, Showable v2, Showable k3, Showable v3, Eq k3, Eq v3)
+  => Mapper k1 v1 k2 v2 -> Reducer k2 v2 k3 v3 -> Job k1 v1 k3 v3
+job m r = ConsJob (Iteration m r) EmptyJob
+
+
+(>>>) :: (Parsable k1, Parsable v1, Showable k2, Showable v2, Parsable k2, Parsable v2, Eq k2, Eq v2, Showable k3, Showable v3) => Iteration k1 v1 k2 v2 -> Job k2 v2 k3 v3 -> Job k1 v1 k3 v3
+(>>>) = ConsJob
+
+
+runHaskoop :: (Showable k1, Showable v1, Showable k2, Showable v2, Parsable k1, Parsable v1, Parsable k2, Parsable v2) => Configuration -> Job k1 v1 k2 v2 -> IO ()
+runHaskoop conf j = do
+	args <- getArgs
+	if null args 
+		then runJob conf j 
+		else parseAndRunJobIteration j args
+
+
+parseAndRunJobIteration :: (Showable k1, Showable v1, Showable k2, Showable v2, Parsable k1, Parsable v1, Parsable k2, Parsable v2) => Job k1 v1 k2 v2 -> [String] -> IO ()
+parseAndRunJobIteration j ("map":[i]) = runJobIteration j (read i) IterationMapper
+parseAndRunJobIteration j ("reduce":[i]) = runJobIteration j (read i) IterationReducer
+parseAndRunJobIteration _ _ = error "Wrong arguments, expecting \"map\" or \"reduce\""
+
+
+runJob :: Configuration -> Job k1 v1 k2 v2 -> IO ()
+runJob _ _ = undefined
+--runJob conf EmptyJob = return ()
+--runJob conf j = runJob' j 0
+--	where
+--		runJob' EmptyJob _ = return ()
+--		runJob' (ConsJob it j) i = rawSystem "hadoop-streaming" [
+--			"-input " ++ (fromJust $ input conf),
+--			"-output " ++ (fromJust $ output conf)] -- mapper is this program with args map i, reducer same with args reduce i
+
+
+type IterationNumber = Int
+data IterationPhase = IterationMapper | IterationReducer
+
+
+runJobIteration :: (Parsable k1, Parsable v1, Parsable k2, Parsable v2, Showable k1, Showable v1, Showable k2, Showable v2) => Job k1 v1 k2 v2 -> IterationNumber -> IterationPhase -> IO ()
+runJobIteration EmptyJob _ _ = return ()
+runJobIteration (ConsJob (Iteration m _) _) 0 IterationMapper = runMapper m
+runJobIteration (ConsJob (Iteration _ r) _) 0 IterationReducer = runReducer r
+runJobIteration (ConsJob _ j) i p = runJobIteration j (i-1) p
+
 
 data Configuration = Configuration {
 	input :: Maybe [String],
@@ -65,12 +110,6 @@ runReducer reducer = do
 	mapM_ putStrLn $ map showKeyValue $ concat reduceOutput
 
 
---runPlainIteration :: (Parsable k1, Parsable v1, Showable k3, Ord k3, Showable v3) => Configuration -> Iteration k1 v1 k3 v3 -> IO ()
---runPlainIteration conf (Iteration mapper reducer) = do
---	contents <- getContents
---	mapM_ putStrLn $ map showKeyValue $ concatMap (uncurry reducer) $ groupMapOutput $ L.sort $ concatMap (uncurry mapper . parseKeyValue) $ lines contents
-
-
 parseKeyValue :: (Parsable k, Parsable v) => String -> (k,v)
 parseKeyValue = (parse *** parse) . split (== '\t')
 
@@ -84,49 +123,12 @@ showKeyValue :: (Showable k, Showable v) => (k,v) -> String
 showKeyValue (k,v) = showit k ++ "\t" ++ showit v
 
 
-runHadoopIteration :: Configuration -> Iteration k1 v1 k2 v2 -> IO ()
-runHadoopIteration conf (Iteration mapper reducer) = undefined
-
-
--- Groups the streaming reduce output per key. This is guaranteed to be sorted by key.
--- FIXME: use something more efficient than list concatenation.
--- FIXME: use Data.Vector and use span and break!!!
 groupMapOutput :: (Eq k, Eq v) => [(k,v)] -> [(k,[v])]
 groupMapOutput kvs = groupMapOutput' kvs []
-groupMapOutput' kvs gs
-	| kvs == [] = gs
-	| otherwise = groupMapOutput' rest (gs ++ [(k, map snd group)])
-		where 
-			k = fst (head kvs)
-			(group, rest) = span ((== k) . fst) kvs
-
-
---runIteration :: (Parsable k1, Parsable v1, Showable k3, Ord k3, Showable v3) => Configuration -> Iteration k1 v1 k3 v3 -> IO ()
---runIteration conf@(Configuration { jobType = Just Plain }) it = runPlainIteration conf it
---runIteration conf@(Configuration { jobType = Just Hadoop}) it = runHadoopIteration conf it
-
-
-
-
---runHaskoop :: Job k1 v1 k2 v2 -> IO ()
---runHaskoop job = do
---	args <- getArgs
---	runHaskoop' job args
-
---runHaskoop' :: Job k1 v1 k2 v2 -> IO ()
---runHaskoop' job [] = runJob job
---runHaskoop' job ("map":args) = runMapper 
---runHaskoop' job ("reduce":args) = undefined
-
-
---concatJob :: Job k1 v1 k2 v2 -> Job k2 v2 k3 v3 -> Job k1 v1 k3 v3
---concatJob j1 j2 = Job $ \conf -> do
---	runJob j1 (conf { output = intermediateFile conf, number = number conf })
---	runJob j2 (conf { input = [intermediateFile conf], number = number conf + 1 })
---  where
---  	intermediateFile conf = output conf ++ makeIntermediateSuffix (output conf) (number conf)
---  	makeIntermediateSuffix file jobNumber = if hasIntermediateSuffix file then "" else "_pre" ++ show jobNumber
-
--- Checks for "_pre1" etc. at the end of the intermediate file
---hasIntermediateSuffix :: String -> Bool
---hasIntermediateSuffix s = tail (reverse "_pre") `isPrefixOf` reverse s
+	where
+		groupMapOutput' kvs' gs
+			| kvs' == [] = gs
+			| otherwise = groupMapOutput' rest (gs ++ [(k, map snd group)])
+				where 
+					k = fst (head kvs')
+					(group, rest) = span ((== k) . fst) kvs'
