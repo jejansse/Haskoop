@@ -4,6 +4,9 @@
 module Haskoop where
 import Control.Arrow
 import System.Environment
+import System.Process
+import Data.Maybe (fromJust)
+import Data.List (intersperse)
 
 
 type Mapper k1 v1 k2 v2 = k1 -> v1 -> IO [(k2,v2)]
@@ -22,40 +25,55 @@ job :: (Parsable k1, Parsable v1, Parsable k2, Parsable v2, Eq k2, Eq v2, Parsab
 job m r = ConsJob (Iteration m r) EmptyJob
 
 
-(>>>) :: (Parsable k1, Parsable v1, Showable k2, Showable v2, Parsable k2, Parsable v2, Eq k2, Eq v2, Showable k3, Showable v3) => Iteration k1 v1 k2 v2 -> Job k2 v2 k3 v3 -> Job k1 v1 k3 v3
+(>>>) :: (Parsable k1, Parsable v1, Showable k2, Showable v2, Parsable k2, Parsable v2, Eq k2, Eq v2, Showable k3, Showable v3) 
+      => Iteration k1 v1 k2 v2 -> Job k2 v2 k3 v3 -> Job k1 v1 k3 v3
 (>>>) = ConsJob
 
 
-runHaskoop :: (Showable k1, Showable v1, Showable k2, Showable v2, Parsable k1, Parsable v1, Parsable k2, Parsable v2) => Configuration -> Job k1 v1 k2 v2 -> IO ()
+runHaskoop :: (Showable k1, Showable v1, Showable k2, Showable v2, Parsable k1, Parsable v1, Parsable k2, Parsable v2) 
+           => Configuration -> Job k1 v1 k2 v2 -> IO ()
 runHaskoop conf j = do
 	args <- getArgs
+	progName <- getProgName
 	if null args 
-		then runJob conf j 
+		then runJob progName conf j 
 		else parseAndRunJobIteration j args
 
 
-parseAndRunJobIteration :: (Showable k1, Showable v1, Showable k2, Showable v2, Parsable k1, Parsable v1, Parsable k2, Parsable v2) => Job k1 v1 k2 v2 -> [String] -> IO ()
+parseAndRunJobIteration :: (Showable k1, Showable v1, Showable k2, Showable v2, Parsable k1, Parsable v1, Parsable k2, Parsable v2) 
+						=> Job k1 v1 k2 v2 -> [String] -> IO ()
 parseAndRunJobIteration j ("map":[i]) = runJobIteration j (read i) IterationMapper
 parseAndRunJobIteration j ("reduce":[i]) = runJobIteration j (read i) IterationReducer
 parseAndRunJobIteration _ _ = error "Wrong arguments, expecting \"map\" or \"reduce\""
 
+type ProgramName = String
 
-runJob :: Configuration -> Job k1 v1 k2 v2 -> IO ()
-runJob _ _ = undefined
---runJob conf EmptyJob = return ()
---runJob conf j = runJob' j 0
---	where
---		runJob' EmptyJob _ = return ()
---		runJob' (ConsJob it j) i = rawSystem "hadoop-streaming" [
---			"-input " ++ (fromJust $ input conf),
---			"-output " ++ (fromJust $ output conf)] -- mapper is this program with args map i, reducer same with args reduce i
+runJob :: ProgramName -> Configuration -> Job k1 v1 k2 v2 -> IO ()
+runJob progName conf job = go job 0
+	where 
+		go :: Job k1 v1 k2 v2 -> Int -> IO ()
+		go EmptyJob _ = return ()
+		go (ConsJob _ j) i = do
+			system $ hadoopBinary ++ " dfs -rmr " ++ outputFile
+			system $ hadoopBinary ++ " jar " ++ streamingJar' ++ " " ++ (streamingArgs i)
+			go j (i+1)
+		hadoopBinary = fromJust (hadoop conf)
+		streamingJar' = fromJust (streamingJar conf)
+		streamingArgs i = concat $ intersperse " " [inputArgs, outputArg, progArg, mapArg i, reduceArg i]
+		inputArgs = concat $ intersperse " " ["-input " ++ inputFile | inputFile <- fromJust (input conf)]
+		outputFile = fromJust (output conf)
+		outputArg = "-output " ++ outputFile
+		progArg = "-file " ++ progName
+		mapArg i = "-mapper " ++ "\'./" ++ progName ++ " map " ++ show i ++ "\'"
+		reduceArg i = "-reducer " ++ "\'./" ++ progName ++ " reduce " ++ show i ++ "\'"
 
 
 type IterationNumber = Int
 data IterationPhase = IterationMapper | IterationReducer
 
 
-runJobIteration :: (Parsable k1, Parsable v1, Parsable k2, Parsable v2, Showable k1, Showable v1, Showable k2, Showable v2) => Job k1 v1 k2 v2 -> IterationNumber -> IterationPhase -> IO ()
+runJobIteration :: (Parsable k1, Parsable v1, Parsable k2, Parsable v2, Showable k1, Showable v1, Showable k2, Showable v2) 
+				=> Job k1 v1 k2 v2 -> IterationNumber -> IterationPhase -> IO ()
 runJobIteration EmptyJob _ _ = return ()
 runJobIteration (ConsJob (Iteration m _) _) 0 IterationMapper = runMapper m
 runJobIteration (ConsJob (Iteration _ r) _) 0 IterationReducer = runReducer r
@@ -66,7 +84,9 @@ data Configuration = Configuration {
 	input :: Maybe [String],
 	output :: Maybe String,
 	mappers :: Maybe Int,
-	reducers :: Maybe Int
+	reducers :: Maybe Int,
+	hadoop :: Maybe String,
+	streamingJar :: Maybe String
 }
 
 defaultConfiguration :: Configuration
@@ -74,7 +94,9 @@ defaultConfiguration = Configuration {
 	input = Nothing,
 	output = Nothing,
 	mappers = Just 1,
-	reducers = Just 1
+	reducers = Just 1,
+	hadoop = Nothing,
+	streamingJar = Nothing
 }
 
 class Parsable a where
@@ -96,14 +118,16 @@ instance Showable Int where
 	showit = show
 
 
-runMapper :: (Parsable k1, Parsable v1, Showable v2, Showable k2) => Mapper k1 v1 k2 v2 -> IO ()
+runMapper :: (Parsable k1, Parsable v1, Showable v2, Showable k2) 
+		  => Mapper k1 v1 k2 v2 -> IO ()
 runMapper mapper = do
 	contents <- getContents
 	mapOutput <- mapM (uncurry mapper . parseKeyValue) $ lines contents
 	mapM_ putStrLn $ map showKeyValue $ concat mapOutput
 
 
-runReducer :: (Parsable k1, Parsable v1, Eq k1, Eq v1, Showable v2, Showable k2) => Reducer k1 v1 k2 v2 -> IO ()
+runReducer :: (Parsable k1, Parsable v1, Eq k1, Eq v1, Showable v2, Showable k2) 
+           => Reducer k1 v1 k2 v2 -> IO ()
 runReducer reducer = do
 	contents <- getContents
 	reduceOutput <- mapM (uncurry reducer) $ groupMapOutput $ map parseKeyValue $ lines contents
