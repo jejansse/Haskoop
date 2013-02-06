@@ -1,4 +1,4 @@
-name:                Haskoop
+name:                haskoop
 version:             0.1.0.0
 synopsis:            Haskoop is a Haskell library for working with Hadoop Streaming.
 homepage:            http://haskoop.github.com
