@@ -5,8 +5,8 @@ import Haskoop
 
 configuration :: Configuration
 configuration = defaultConfiguration {
-	input = Just ["file:///Users/jeroenthuis/Workspace/Haskoop2/access.log"],
-	output = Just "/user/jeroenthuis/haskoop/ipcounts",
+	input = Just ["file:///Users/jeroenthuis/Workspace/Haskoop/src/examples/words.txt"],
+	output = Just "/user/jeroenthuis/haskoop/wordcounts",
 	hadoop = Just "/Users/jeroenthuis/Workspace/hadoop-1.0.3/bin/hadoop",
 	streamingJar = Just "/Users/jeroenthuis/Workspace/hadoop-1.0.3/contrib/streaming/hadoop-streaming-1.0.3.jar"
 }
