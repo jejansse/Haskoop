@@ -9,14 +9,19 @@ import Data.Maybe (fromJust)
 import Data.List (intersperse)
 
 
+-- |A 'Mapper' is a function mapping a key-value pair to a list of key-value pairs in the Haskoop monad.
 type Mapper k1 v1 k2 v2 = k1 -> v1 -> IO [(k2,v2)]
 
+-- |A 'Reducer' is a function mapping a key and list of values to a list of key-values pairs in the Haskoop monad.
 type Reducer k1 v1 k2 v2 = k1 -> [v1] -> IO [(k2,v2)]
 
+-- |An 'Iteration' is a combination of a 'Mapper' and a 'Reducer'.
 data Iteration k1 v1 k3 v3 = forall k2 v2 . (KeyValue k2, KeyValue v2) => Iteration (Mapper k1 v1 k2 v2) (Reducer k2 v2 k3 v3)
 
+-- |A 'Job' is either empty or a list of iterations.
 data Job k1 v1 k3 v3 = EmptyJob | forall k2 v2 . (KeyValue k2, KeyValue v2) => ConsJob (Iteration k1 v1 k2 v2) (Job k2 v2 k3 v3)
 
+-- |A 'KeyValue' is any type that can be used as a key or as a value.
 class (Show a, Read a, Eq a) => KeyValue a where
 	readKeyValue :: String -> a
 	readKeyValue = read
@@ -29,17 +34,17 @@ instance KeyValue Int where
 	readKeyValue = read
 	showKeyValue = show
 
-
+-- |The 'job' function creates a job from a mapper and a reducer.
 job :: (KeyValue k1, KeyValue v1, KeyValue k2, KeyValue v2, KeyValue k3, KeyValue v3)
   => Mapper k1 v1 k2 v2 -> Reducer k2 v2 k3 v3 -> Job k1 v1 k3 v3
 job m r = ConsJob (Iteration m r) EmptyJob
 
-
+-- |The '(>>>)' function is a convenient shorthand for ConsJob.
 (>>>) :: (KeyValue k1, KeyValue v1, KeyValue k2, KeyValue v2, KeyValue k3, KeyValue v3)
       => Iteration k1 v1 k2 v2 -> Job k2 v2 k3 v3 -> Job k1 v1 k3 v3
 (>>>) = ConsJob
 
-
+-- |The 'runHaskoop' function is the main function for any Haskoop program.
 runHaskoop :: (KeyValue k1, KeyValue v1, KeyValue k2, KeyValue v2)
            => Configuration -> Job k1 v1 k2 v2 -> IO ()
 runHaskoop conf j = do
