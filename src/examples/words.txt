@@ -1,3 +1,0 @@
-1	this is a test for counting some words
-2	let us see whether hadoop can really count all these words
-3	this will let us evaluate everything
