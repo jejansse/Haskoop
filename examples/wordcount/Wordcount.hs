@@ -1,12 +1,12 @@
 module Main where
 import Haskoop
 import Control.Monad (liftM)
-import Paths_Haskoop
 
 -- Word count example
 
 configuration :: Configuration
 configuration = defaultConfiguration {
+	input = Just ["file:////Users/jeroenthuis/Workspace/Haskoop/examples/wordcount/words.txt"],
 	output = Just "haskoop/wordcounts",
 	hadoop = Just "/Users/jeroenthuis/Workspace/hadoop-1.0.3/bin/hadoop",
 	streamingJar = Just "/Users/jeroenthuis/Workspace/hadoop-1.0.3/contrib/streaming/hadoop-streaming-1.0.3.jar"
@@ -23,5 +23,4 @@ wcJob = job mapper1 reducer1
 
 main :: IO ()
 main = do
-	inputFile <- liftM ("file:///" ++) $ liftM show $ getDataFileName "words.txt"
-	runHaskoop (configuration {input = Just [inputFile]}) wcJob
+	runHaskoop configuration wcJob
