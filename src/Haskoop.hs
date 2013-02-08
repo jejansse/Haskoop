@@ -135,8 +135,8 @@ parseKeyValue = (readKeyValue *** readKeyValue) . split (== '\t')
 
 
 split :: (a -> Bool) -> [a] -> ([a], [a])
-split p xs = let (group, rest) = break p xs
-			 in (group, tail rest)
+split p xs = (group, tail rest)
+	where (group, rest) = break p xs
 
 
 printKeyValue :: (KeyValue k, KeyValue v) => (k,v) -> String
