@@ -126,7 +126,7 @@ runReducer :: (KeyValue k1, KeyValue v1, KeyValue k2, KeyValue v2)
            => Reducer k1 v1 k2 v2 -> IO ()
 runReducer reducer = do
 	contents <- getContents
-	reduceOutput <- mapM (uncurry reducer) $ groupMapOutput $ map parseKeyValue $ lines contents
+	reduceOutput <- mapM (uncurry reducer) $ groupReduceInput $ map parseKeyValue $ lines contents
 	mapM_ putStrLn $ map printKeyValue $ concat reduceOutput
 
 
@@ -143,12 +143,7 @@ printKeyValue :: (KeyValue k, KeyValue v) => (k,v) -> String
 printKeyValue (k,v) = showKeyValue k ++ "\t" ++ showKeyValue v
 
 
-groupMapOutput :: (Eq k, Eq v) => [(k,v)] -> [(k,[v])]
-groupMapOutput kvs = groupMapOutput' kvs []
-	where
-		groupMapOutput' kvs' gs
-			| kvs' == [] = gs
-			| otherwise = groupMapOutput' rest (gs ++ [(k, map snd group)])
-				where 
-					k = fst (head kvs')
-					(group, rest) = span ((== k) . fst) kvs'
+groupReduceInput :: (Eq k, Eq v) => [(k,v)] -> [(k,[v])]
+groupReduceInput [] = []
+groupReduceInput ((k,v):xs) = (k, v : map snd ys) : groupReduceInput zs
+    where (ys,zs) = span ((== k) . fst) xs
