@@ -1,6 +1,5 @@
 module Main where
 import Haskoop
-import Control.Monad (liftM)
 
 -- Word count example
 
@@ -12,10 +11,12 @@ configuration = JobConfiguration {
 	streamingJar = "/Users/jeroenthuis/Workspace/hadoop-1.0.3/contrib/streaming/hadoop-streaming-1.0.3.jar"
 }
 
-mapper1 :: Int -> String -> IO [(String, Int)]
-mapper1 _ value = return [(w,1) | w <- words value]
+mapper1 :: Mapper Int String String Int
+mapper1 _ value = do
+	updateCounter "lines read" (+1)
+	return [(w,1) | w <- words value]
 
-reducer1 :: String -> [Int] -> IO [(String, Int)]
+reducer1 :: Reducer String Int String Int
 reducer1 key values = return [(key, sum values)]
 
 wcJob :: Job Int String String Int

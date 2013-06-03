@@ -93,6 +93,12 @@ runMapper mapper = do
 	mapM_ putStrLn $ map printKeyValue $ concat mapOutput
 
 
+-- TODO: implement the above function in a better way and integrate
+-- the implementation with runreducer somehow
+runMapper mapper = getContents >>= runMapper' >>= mapM_ putStrLn
+    where runMapper' = concatMapM (uncurry mapper . parseRecord . lines) >>= lift (map printKeyValue)
+
+
 runReducer :: (KeyValue k1, KeyValue v1, KeyValue k2, KeyValue v2)
            => Reducer k1 v1 k2 v2 -> IO ()
 runReducer reducer = do
@@ -101,8 +107,13 @@ runReducer reducer = do
 	mapM_ putStrLn $ map printKeyValue $ concat reduceOutput
 
 
+-- Call this parseRecord for better naming
 parseKeyValue :: (KeyValue k, KeyValue v) => String -> (k,v)
 parseKeyValue = (readKeyValue *** readKeyValue) . split (== '\t')
+
+
+concatMapM :: Monad m => m [[a]] -> m [a]
+concatMapM = liftM concat . mapM
 
 
 split :: (a -> Bool) -> [a] -> ([a], [a])

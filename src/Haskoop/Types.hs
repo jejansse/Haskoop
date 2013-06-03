@@ -37,3 +37,10 @@ iteration m r = SingleJob (Iteration m r)
 (>>>) :: (KeyValue k1, KeyValue v1, KeyValue k2, KeyValue v2, KeyValue k3, KeyValue v3)
       => Iteration k1 v1 k2 v2 -> Job k2 v2 k3 v3 -> Job k1 v1 k3 v3
 (>>>) = ConsJob
+
+data TaskState = TaskState {
+	jobConfiguration :: JobConfiguration
+}
+
+-- Should be able to read the TaskConfiguration, but what State do we have?
+type Mapper st k1 v1 k2 v2 = RWST TaskConfiguration w st IO [(k2,v2)]
